@@ -124,6 +124,25 @@ describe("Phase 2: SDK should not use internal tools", () => {
     expect(capturedQueryParams.options.mcpServers).toBeDefined()
   })
 
+  it("should block SDK built-in tools and allow only MCP tools", async () => {
+    mockMessages = [
+      assistantMessage([{ type: "text", text: "Hi" }]),
+    ]
+
+    const app = createTestApp()
+    const response = await postMessages(app, makeRequest({ stream: false }))
+    await response.json()
+
+    // Block built-in tools (they use wrong param names)
+    expect(capturedQueryParams.options.disallowedTools).toContain("Read")
+    expect(capturedQueryParams.options.disallowedTools).toContain("Bash")
+    expect(capturedQueryParams.options.disallowedTools).toContain("Write")
+
+    // Allow only MCP tools (correct param names)
+    expect(capturedQueryParams.options.allowedTools).toContain("mcp__opencode__read")
+    expect(capturedQueryParams.options.allowedTools).toContain("mcp__opencode__bash")
+  })
+
   it("should bypass permissions for automatic tool execution", async () => {
     mockMessages = [
       assistantMessage([{ type: "text", text: "Hi" }]),

@@ -13,7 +13,23 @@ import { opencodeMcpServer } from "../mcpTools"
 import { randomUUID } from "crypto"
 import { withClaudeLogContext } from "../logger"
 
+// Block SDK built-in tools so Claude only uses MCP tools (which have correct param names)
+const BLOCKED_BUILTIN_TOOLS = [
+  "Read", "Write", "Edit", "MultiEdit",
+  "Bash", "Glob", "Grep", "NotebookEdit",
+  "WebFetch", "WebSearch", "TodoWrite"
+]
+
 const MCP_SERVER_NAME = "opencode"
+
+const ALLOWED_MCP_TOOLS = [
+  `mcp__${MCP_SERVER_NAME}__read`,
+  `mcp__${MCP_SERVER_NAME}__write`,
+  `mcp__${MCP_SERVER_NAME}__edit`,
+  `mcp__${MCP_SERVER_NAME}__bash`,
+  `mcp__${MCP_SERVER_NAME}__glob`,
+  `mcp__${MCP_SERVER_NAME}__grep`
+]
 
 function resolveClaudeExecutable(): string {
   // 1. Try the SDK's bundled cli.js (same dir as this module's SDK)
@@ -149,6 +165,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}) {
                 pathToClaudeCodeExecutable: claudeExecutable,
                 permissionMode: "bypassPermissions",
                 allowDangerouslySkipPermissions: true,
+                disallowedTools: [...BLOCKED_BUILTIN_TOOLS],
+                allowedTools: [...ALLOWED_MCP_TOOLS],
                 mcpServers: {
                   [MCP_SERVER_NAME]: opencodeMcpServer
                 }
@@ -267,6 +285,8 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}) {
                   includePartialMessages: true,
                   permissionMode: "bypassPermissions",
                   allowDangerouslySkipPermissions: true,
+                  disallowedTools: [...BLOCKED_BUILTIN_TOOLS],
+                  allowedTools: [...ALLOWED_MCP_TOOLS],
                   mcpServers: {
                     [MCP_SERVER_NAME]: opencodeMcpServer
                   }
