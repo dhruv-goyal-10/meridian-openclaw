@@ -48,6 +48,9 @@ function acquireLock(lockPath: string): boolean {
     try {
       const stat = statSync(lockPath)
       if (Date.now() - stat.mtimeMs > STALE_LOCK_THRESHOLD_MS) {
+        // TOCTOU: another process could grab the lock between unlink and open.
+        // The second openSync("wx") will throw EEXIST in that case, caught below.
+        // This is acceptable — one process wins, the other proceeds without lock.
         unlinkSync(lockPath)
         const fd = openSync(lockPath, "wx")
         closeSync(fd)

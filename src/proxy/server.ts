@@ -19,6 +19,7 @@ import { fuzzyMatchAgentName } from "./agentMatch"
 import { buildAgentDefinitions } from "./agentDefs"
 import { createPassthroughMcpServer, stripMcpPrefix, PASSTHROUGH_MCP_NAME, PASSTHROUGH_MCP_PREFIX } from "./passthroughTools"
 import { lookupSharedSession, storeSharedSession, clearSharedSessions } from "./sessionStore"
+import { LRUMap } from "../utils/lruMap"
 
 // --- Session Tracking ---
 // Maps OpenCode session ID (or fingerprint) → Claude SDK session ID
@@ -26,77 +27,6 @@ interface SessionState {
   claudeSessionId: string
   lastAccess: number
   messageCount: number
-}
-
-class LRUMap<K, V> implements Iterable<[K, V]> {
-  private readonly map = new Map<K, V>()
-
-  constructor(
-    private readonly maxSize: number,
-    private readonly onEvict?: (key: K, value: V) => void
-  ) {}
-
-  get size(): number {
-    return this.map.size
-  }
-
-  get(key: K): V | undefined {
-    const value = this.map.get(key)
-    if (value === undefined) return undefined
-    this.map.delete(key)
-    this.map.set(key, value)
-    return value
-  }
-
-  set(key: K, value: V): this {
-    if (this.map.has(key)) {
-      this.map.delete(key)
-    } else if (this.map.size >= this.maxSize) {
-      this.evictOldest()
-    }
-
-    this.map.set(key, value)
-    return this
-  }
-
-  has(key: K): boolean {
-    return this.map.has(key)
-  }
-
-  delete(key: K): boolean {
-    return this.map.delete(key)
-  }
-
-  clear(): void {
-    this.map.clear()
-  }
-
-  entries(): MapIterator<[K, V]> {
-    return this.map.entries()
-  }
-
-  keys(): MapIterator<K> {
-    return this.map.keys()
-  }
-
-  values(): MapIterator<V> {
-    return this.map.values()
-  }
-
-  [Symbol.iterator](): MapIterator<[K, V]> {
-    return this.map[Symbol.iterator]()
-  }
-
-  private evictOldest(): void {
-    const oldestKey = this.map.keys().next().value as K | undefined
-    if (oldestKey === undefined) return
-
-    const oldestValue = this.map.get(oldestKey)
-    if (oldestValue === undefined) return
-
-    this.map.delete(oldestKey)
-    this.onEvict?.(oldestKey, oldestValue)
-  }
 }
 
 const DEFAULT_MAX_SESSIONS = 1000
@@ -114,10 +44,6 @@ export function getMaxSessionsLimit(): number {
   return parsed
 }
 
-let sessionCache: LRUMap<string, SessionState>
-let fingerprintCache: LRUMap<string, SessionState>
-let activeSessionCacheSize = 0
-
 function removeFingerprintEntriesByClaudeSessionId(claudeSessionId: string): void {
   for (const [key, state] of fingerprintCache.entries()) {
     if (state.claudeSessionId === claudeSessionId) {
@@ -134,30 +60,37 @@ function removeSessionEntriesByClaudeSessionId(claudeSessionId: string): void {
   }
 }
 
-function initializeSessionCaches(maxSize: number): void {
-  activeSessionCacheSize = maxSize
-  sessionCache = new LRUMap<string, SessionState>(maxSize, (_key, evictedState) => {
+function createSessionCache(maxSize: number) {
+  return new LRUMap<string, SessionState>(maxSize, (_key, evictedState) => {
     removeFingerprintEntriesByClaudeSessionId(evictedState.claudeSessionId)
   })
-  fingerprintCache = new LRUMap<string, SessionState>(maxSize, (_key, evictedState) => {
+}
+
+function createFingerprintCache(maxSize: number) {
+  return new LRUMap<string, SessionState>(maxSize, (_key, evictedState) => {
     removeSessionEntriesByClaudeSessionId(evictedState.claudeSessionId)
   })
 }
 
-function ensureSessionCacheLimit(): void {
-  const configuredLimit = getMaxSessionsLimit()
-  if (configuredLimit !== activeSessionCacheSize) {
-    initializeSessionCaches(configuredLimit)
-  }
-}
+// Read limit once at module load — no hot-reload in createProxyServer to avoid
+// silently dropping all sessions mid-operation. clearSessionCache() re-reads the
+// env var so tests can override the limit.
+let activeMaxSessions = getMaxSessionsLimit()
+let sessionCache = createSessionCache(activeMaxSessions)
+let fingerprintCache = createFingerprintCache(activeMaxSessions)
 
-initializeSessionCaches(getMaxSessionsLimit())
-
-/** Clear all session caches (used in tests) */
+/** Clear all session caches (used in tests).
+ *  Re-reads CLAUDE_PROXY_MAX_SESSIONS so tests can override the limit. */
 export function clearSessionCache() {
-  ensureSessionCacheLimit()
-  sessionCache.clear()
-  fingerprintCache.clear()
+  const configuredLimit = getMaxSessionsLimit()
+  if (configuredLimit !== activeMaxSessions) {
+    activeMaxSessions = configuredLimit
+    sessionCache = createSessionCache(activeMaxSessions)
+    fingerprintCache = createFingerprintCache(activeMaxSessions)
+  } else {
+    sessionCache.clear()
+    fingerprintCache.clear()
+  }
   // Also clear shared file store
   try { clearSharedSessions() } catch {}
 }
@@ -398,6 +331,17 @@ let cachedClaudePath: string | null = null
 let cachedClaudePathPromise: Promise<string> | null = null
 let claudeExecutable = ""
 
+/**
+ * Resolve the Claude executable path asynchronously (non-blocking).
+ *
+ * Uses a three-tier cache:
+ * 1. cachedClaudePath — resolved path, returned immediately on subsequent calls
+ * 2. cachedClaudePathPromise — deduplicates concurrent calls during resolution
+ * 3. Falls through to resolution logic (SDK cli.js → system `which claude`)
+ *
+ * The promise is cleared in `finally` to allow retry on failure while
+ * cachedClaudePath prevents re-resolution on success.
+ */
 async function resolveClaudeExecutableAsync(): Promise<string> {
   if (cachedClaudePath) return cachedClaudePath
   if (cachedClaudePathPromise) return cachedClaudePathPromise
@@ -445,7 +389,6 @@ function isClosedControllerError(error: unknown): boolean {
 }
 
 export function createProxyServer(config: Partial<ProxyConfig> = {}) {
-  ensureSessionCacheLimit()
   const finalConfig = { ...DEFAULT_PROXY_CONFIG, ...config }
   const app = new Hono()
 
@@ -759,6 +702,11 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}) {
           claudeLog("upstream.start", { mode: "non_stream", model })
 
           try {
+            // Lazy-resolve executable if not already set (e.g. when using createProxyServer directly)
+            if (!claudeExecutable) {
+              claudeExecutable = await resolveClaudeExecutableAsync()
+            }
+
             const response = query({
               prompt,
               options: {
