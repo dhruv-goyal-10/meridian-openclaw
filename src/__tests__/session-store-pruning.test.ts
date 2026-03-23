@@ -5,7 +5,7 @@
  * evicting the least recently used entries when capacity is exceeded.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, spyOn, type Mock } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -13,10 +13,16 @@ import { storeSharedSession, lookupSharedSession, clearSharedSessions } from "..
 
 describe("Session store count-based pruning", () => {
   let tmpDir: string
+  let dateSpy: Mock<typeof Date.now>
   const originalDir = process.env.CLAUDE_PROXY_SESSION_DIR
   const originalMax = process.env.CLAUDE_PROXY_MAX_STORED_SESSIONS
 
   beforeEach(() => {
+    // Mock Date.now() to return monotonically increasing values so that
+    // lastUsedAt ordering is deterministic even when the loop runs in <1ms
+    // (which happens on fast CI runners).
+    let now = 1_000_000
+    dateSpy = spyOn(Date, "now").mockImplementation(() => now++)
     tmpDir = mkdtempSync(join(tmpdir(), "session-pruning-test-"))
     process.env.CLAUDE_PROXY_SESSION_DIR = tmpDir
     process.env.CLAUDE_PROXY_MAX_STORED_SESSIONS = "5"
@@ -24,6 +30,7 @@ describe("Session store count-based pruning", () => {
   })
 
   afterEach(() => {
+    dateSpy.mockRestore()
     rmSync(tmpDir, { recursive: true, force: true })
     if (originalDir === undefined) delete process.env.CLAUDE_PROXY_SESSION_DIR
     else process.env.CLAUDE_PROXY_SESSION_DIR = originalDir
