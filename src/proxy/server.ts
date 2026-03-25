@@ -19,7 +19,7 @@ import { createPassthroughMcpServer, stripMcpPrefix, PASSTHROUGH_MCP_NAME, PASST
 
 import { telemetryStore, diagnosticLog, createTelemetryRoutes, landingHtml } from "../telemetry"
 import type { RequestMetric } from "../telemetry"
-import { classifyError } from "./errors"
+import { classifyError, isStaleSessionError } from "./errors"
 import { mapModelToClaudeModel, resolveClaudeExecutableAsync, isClosedControllerError, getClaudeAuthStatusAsync } from "./models"
 import { ALLOWED_MCP_TOOLS } from "./tools"
 import { getLastUserMessage } from "./messages"
@@ -33,7 +33,7 @@ import {
 } from "./session/lineage"
 // Re-export for backwards compatibility (existing tests import from here)
 
-import { lookupSession, storeSession, clearSessionCache, getMaxSessionsLimit } from "./session/cache"
+import { lookupSession, storeSession, clearSessionCache, getMaxSessionsLimit, evictSession } from "./session/cache"
 // Re-export for backwards compatibility (existing tests import from here)
 export { computeLineageHash, hashMessage, computeMessageHashes }
 export { clearSessionCache, getMaxSessionsLimit }
@@ -52,6 +52,79 @@ export type { LineageResult }
 const exec = promisify(execCallback)
 
 let claudeExecutable = ""
+
+/**
+ * Build a prompt from all messages for a fresh (non-resume) session.
+ * Used when retrying after a stale session UUID error.
+ */
+function buildFreshPrompt(
+  messages: Array<{ role: string; content: any }>,
+  stripCacheControl: (content: any) => any
+): string | AsyncIterable<any> {
+  const MULTIMODAL_TYPES = new Set(["image", "document", "file"])
+  const hasMultimodal = messages.some((m) =>
+    Array.isArray(m.content) && m.content.some((b: any) => MULTIMODAL_TYPES.has(b.type))
+  )
+
+  if (hasMultimodal) {
+    const structured: Array<{ type: "user"; message: { role: string; content: any }; parent_tool_use_id: null }> = []
+    for (const m of messages) {
+      if (m.role === "user") {
+        structured.push({
+          type: "user" as const,
+          message: { role: "user" as const, content: stripCacheControl(m.content) },
+          parent_tool_use_id: null,
+        })
+      } else {
+        let text: string
+        if (typeof m.content === "string") {
+          text = `[Assistant: ${m.content}]`
+        } else if (Array.isArray(m.content)) {
+          text = m.content.map((b: any) => {
+            if (b.type === "text" && b.text) return `[Assistant: ${b.text}]`
+            if (b.type === "tool_use") return `[Tool Use: ${b.name}(${JSON.stringify(b.input)})]`
+            if (b.type === "tool_result") return `[Tool Result: ${typeof b.content === "string" ? b.content : JSON.stringify(b.content)}]`
+            return ""
+          }).filter(Boolean).join("\n")
+        } else {
+          text = `[Assistant: ${String(m.content)}]`
+        }
+        structured.push({
+          type: "user" as const,
+          message: { role: "user" as const, content: text },
+          parent_tool_use_id: null,
+        })
+      }
+    }
+    return (async function* () { for (const msg of structured) yield msg })()
+  }
+
+  return messages
+    .map((m) => {
+      const role = m.role === "assistant" ? "Assistant" : "Human"
+      let content: string
+      if (typeof m.content === "string") {
+        content = m.content
+      } else if (Array.isArray(m.content)) {
+        content = m.content
+          .map((block: any) => {
+            if (block.type === "text" && block.text) return block.text
+            if (block.type === "tool_use") return `[Tool Use: ${block.name}(${JSON.stringify(block.input)})]`
+            if (block.type === "tool_result") return `[Tool Result for ${block.tool_use_id}: ${typeof block.content === "string" ? block.content : JSON.stringify(block.content)}]`
+            if (block.type === "image") return "[Image attached]"
+            if (block.type === "document") return "[Document attached]"
+            if (block.type === "file") return "[File attached]"
+            return ""
+          })
+          .filter(Boolean)
+          .join("\n")
+      } else {
+        content = String(m.content)
+      }
+      return `${role}: ${content}`
+    })
+    .join("\n\n") || ""
+}
 
 export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServer {
   const finalConfig = { ...DEFAULT_PROXY_CONFIG, ...config }
@@ -403,11 +476,38 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
               claudeExecutable = await resolveClaudeExecutableAsync()
             }
 
-            const response = query(buildQueryOptions({
-              prompt, model, workingDirectory, systemContext, claudeExecutable,
-              passthrough, stream: false, sdkAgents, passthroughMcp, cleanEnv,
-              resumeSessionId, isUndo, undoRollbackUuid, sdkHooks, adapter,
-            }))
+            // Wrap SDK call with retry for stale undo UUIDs.
+            // If the first query fails because resumeSessionAt points to a
+            // UUID that no longer exists, evict the stale session and retry
+            // as a fresh session. The generator makes this transparent to the
+            // existing message-processing loop.
+            const response = (async function* () {
+              try {
+                yield* query(buildQueryOptions({
+                  prompt, model, workingDirectory, systemContext, claudeExecutable,
+                  passthrough, stream: false, sdkAgents, passthroughMcp, cleanEnv,
+                  resumeSessionId, isUndo, undoRollbackUuid, sdkHooks, adapter,
+                }))
+              } catch (error) {
+                if (!isStaleSessionError(error)) throw error
+                claudeLog("session.stale_uuid_retry", {
+                  mode: "non_stream",
+                  rollbackUuid: undoRollbackUuid,
+                  resumeSessionId,
+                })
+                console.error(`[PROXY] Stale session UUID, evicting and retrying as fresh session`)
+                evictSession(opencodeSessionId, workingDirectory, allMessages)
+                // Reset UUID tracking for fresh session
+                sdkUuidMap.length = 0
+                for (let i = 0; i < allMessages.length; i++) sdkUuidMap.push(null)
+                yield* query(buildQueryOptions({
+                  prompt: buildFreshPrompt(allMessages, stripCacheControl),
+                  model, workingDirectory, systemContext, claudeExecutable,
+                  passthrough, stream: false, sdkAgents, passthroughMcp, cleanEnv,
+                  resumeSessionId: undefined, isUndo: false, undoRollbackUuid: undefined, sdkHooks, adapter,
+                }))
+              }
+            })()
 
             for await (const message of response) {
               // Capture session ID from SDK messages
@@ -584,11 +684,33 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
 
             try {
               let currentSessionId: string | undefined
-              const response = query(buildQueryOptions({
-                prompt, model, workingDirectory, systemContext, claudeExecutable,
-                passthrough, stream: true, sdkAgents, passthroughMcp, cleanEnv,
-                resumeSessionId, isUndo, undoRollbackUuid, sdkHooks, adapter,
-              }))
+              // Same stale-UUID retry wrapper as the non-streaming path
+              const response = (async function* () {
+                try {
+                  yield* query(buildQueryOptions({
+                    prompt, model, workingDirectory, systemContext, claudeExecutable,
+                    passthrough, stream: true, sdkAgents, passthroughMcp, cleanEnv,
+                    resumeSessionId, isUndo, undoRollbackUuid, sdkHooks, adapter,
+                  }))
+                } catch (error) {
+                  if (!isStaleSessionError(error)) throw error
+                  claudeLog("session.stale_uuid_retry", {
+                    mode: "stream",
+                    rollbackUuid: undoRollbackUuid,
+                    resumeSessionId,
+                  })
+                  console.error(`[PROXY] Stale session UUID, evicting and retrying as fresh session`)
+                  evictSession(opencodeSessionId, workingDirectory, allMessages)
+                  sdkUuidMap.length = 0
+                  for (let i = 0; i < allMessages.length; i++) sdkUuidMap.push(null)
+                  yield* query(buildQueryOptions({
+                    prompt: buildFreshPrompt(allMessages, stripCacheControl),
+                    model, workingDirectory, systemContext, claudeExecutable,
+                    passthrough, stream: true, sdkAgents, passthroughMcp, cleanEnv,
+                    resumeSessionId: undefined, isUndo: false, undoRollbackUuid: undefined, sdkHooks, adapter,
+                  }))
+                }
+              })()
 
               const heartbeat = setInterval(() => {
                 heartbeatCount += 1

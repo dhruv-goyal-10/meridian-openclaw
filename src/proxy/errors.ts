@@ -97,3 +97,13 @@ export function classifyError(errMsg: string): ClassifiedError {
     message: errMsg || "Unknown error"
   }
 }
+
+/**
+ * Detect errors caused by stale session/message UUIDs.
+ * These happen when the upstream Claude session no longer contains
+ * the referenced message (expired, compacted server-side, etc.).
+ */
+export function isStaleSessionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false
+  return error.message.includes("No message found with message.uuid")
+}

@@ -170,6 +170,28 @@ export function storeSharedSession(key: string, claudeSessionId: string, message
   }
 }
 
+/** Remove a single session from the shared file store.
+ *  Used when a session is detected as stale (e.g. expired upstream). */
+export function evictSharedSession(key: string): void {
+  const path = getStorePath()
+  const lockPath = `${path}.lock`
+  const hasLock = acquireLock(lockPath)
+  if (!hasLock) {
+    console.warn("[sessionStore] could not acquire lock for eviction, proceeding without")
+  }
+  try {
+    const store = readStore()
+    if (store[key]) {
+      delete store[key]
+      writeStore(store)
+    }
+  } finally {
+    if (hasLock) {
+      releaseLock(lockPath)
+    }
+  }
+}
+
 export function clearSharedSessions(): void {
   const path = getStorePath()
   try {

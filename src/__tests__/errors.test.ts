@@ -2,7 +2,7 @@
  * Unit tests for classifyError — pure function, no mocks needed.
  */
 import { describe, it, expect } from "bun:test"
-import { classifyError } from "../proxy/errors"
+import { classifyError, isStaleSessionError } from "../proxy/errors"
 
 describe("classifyError", () => {
   describe("authentication errors", () => {
@@ -132,6 +132,27 @@ describe("classifyError", () => {
     it("detects 'overloaded' keyword", () => {
       const result = classifyError("service overloaded")
       expect(result.status).toBe(503)
+    })
+  })
+
+  describe("stale session detection", () => {
+    it("detects 'No message found with message.uuid' errors", () => {
+      expect(isStaleSessionError(new Error("No message found with message.uuid of: e663b687-6d08-4cc4-b9a9-5245ce8f1e07"))).toBe(true)
+    })
+
+    it("detects the error embedded in longer messages", () => {
+      expect(isStaleSessionError(new Error("claude code returned an error result: No message found with message.uuid of: abc123"))).toBe(true)
+    })
+
+    it("returns false for unrelated errors", () => {
+      expect(isStaleSessionError(new Error("rate limit exceeded"))).toBe(false)
+      expect(isStaleSessionError(new Error("authentication failed"))).toBe(false)
+    })
+
+    it("returns false for non-Error values", () => {
+      expect(isStaleSessionError("No message found with message.uuid")).toBe(false)
+      expect(isStaleSessionError(null)).toBe(false)
+      expect(isStaleSessionError(undefined)).toBe(false)
     })
   })
 

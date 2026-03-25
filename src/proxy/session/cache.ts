@@ -6,7 +6,7 @@
  */
 
 import { LRUMap } from "../../utils/lruMap"
-import { lookupSharedSession, storeSharedSession, clearSharedSessions } from "../sessionStore"
+import { lookupSharedSession, storeSharedSession, clearSharedSessions, evictSharedSession } from "../sessionStore"
 import { getConversationFingerprint } from "./fingerprint"
 import {
   computeLineageHash,
@@ -82,6 +82,34 @@ export function clearSessionCache() {
   }
   // Also clear shared file store
   try { clearSharedSessions() } catch {}
+}
+
+/** Evict a stale session from all caches and the shared store.
+ *  Used when a resume/undo fails because the upstream Claude session is gone. */
+export function evictSession(
+  sessionId: string | undefined,
+  workingDirectory?: string,
+  messages?: Array<{ role: string; content: any }>
+): void {
+  if (sessionId) {
+    const cached = sessionCache.get(sessionId)
+    if (cached) {
+      removeFingerprintEntriesByClaudeSessionId(cached.claudeSessionId)
+      sessionCache.delete(sessionId)
+    }
+    try { evictSharedSession(sessionId) } catch {}
+  }
+  if (messages) {
+    const fp = getConversationFingerprint(messages, workingDirectory)
+    if (fp) {
+      const cached = fingerprintCache.get(fp)
+      if (cached) {
+        removeSessionEntriesByClaudeSessionId(cached.claudeSessionId)
+        fingerprintCache.delete(fp)
+      }
+      try { evictSharedSession(fp) } catch {}
+    }
+  }
 }
 
 // --- Session operations ---
