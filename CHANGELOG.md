@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.0](https://github.com/rynfar/meridian/compare/v1.25.1...v1.26.0) (2026-04-03)
+
+
+### Features
+
+* add OpenAI-compatible /v1/chat/completions and /v1/models endpoints ([#234](https://github.com/rynfar/meridian/issues/234)) ([16a62b4](https://github.com/rynfar/meridian/commit/16a62b4f6a29f2dc8a1edc1590d401986fa51fe1))
+* passthrough SDK params (effort, thinking, taskBudget, betas) + usage logging ([#222](https://github.com/rynfar/meridian/issues/222)) ([533323c](https://github.com/rynfar/meridian/commit/533323cb067708b132691ff3713e922dafced0d9))
+
 ## [1.25.1](https://github.com/rynfar/meridian/compare/v1.25.0...v1.25.1) (2026-04-03)
 
 
