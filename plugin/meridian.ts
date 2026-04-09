@@ -49,7 +49,7 @@ const MeridianPlugin: Plugin = async () => {
         : String(agent)
       // Strip non-ASCII characters (e.g. zero-width spaces) that cause
       // "Header has invalid value" errors in Node.js / undici.
-      output.headers["x-opencode-agent-name"] = rawName.replace(/[^\x20-\x7E]/g, "")
+      output.headers["x-opencode-agent-name"] = rawName.replace(/[^\x20-\x7E]/g, "").trim() || "unknown"
     },
   }
 }
