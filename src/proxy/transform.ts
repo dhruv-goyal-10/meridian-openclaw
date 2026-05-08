@@ -61,6 +61,8 @@ export interface RequestContext {
   incompatibleTools: readonly string[]
   allowedMcpTools: readonly string[]
   coreToolNames?: readonly string[]
+  /** SDK built-in tools that run natively even in passthrough mode (e.g. WebSearch, WebFetch). */
+  nativeBuiltinTools?: readonly string[]
   sdkAgents: Record<string, any>
   sdkHooks?: any
   passthrough?: boolean

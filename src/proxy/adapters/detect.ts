@@ -14,6 +14,7 @@ import { passthroughAdapter } from "./passthrough"
 import { piAdapter } from "./pi"
 import { forgeCodeAdapter } from "./forgecode"
 import { claudeCodeAdapter } from "./claudecode"
+import { openClawAdapter } from "./openclaw"
 
 const ADAPTER_MAP: Record<string, AgentAdapter> = {
   opencode: openCodeAdapter,
@@ -24,6 +25,7 @@ const ADAPTER_MAP: Record<string, AgentAdapter> = {
   forgecode: forgeCodeAdapter,
   "claude-code": claudeCodeAdapter,
   claudecode: claudeCodeAdapter,
+  openclaw: openClawAdapter,
 }
 
 const envDefault = process.env.MERIDIAN_DEFAULT_AGENT || ""
@@ -54,12 +56,20 @@ function isLiteLLMRequest(c: Context): boolean {
  * Detection rules (evaluated in order):
  * 1. x-meridian-agent header               → explicit adapter override
  * 2. x-opencode-session or x-session-affinity header → OpenCode adapter
- * 3. User-Agent starts with "opencode/"     → OpenCode adapter
- * 4. User-Agent starts with "factory-cli/"  → Droid adapter
- * 5. User-Agent starts with "Charm-Crush/"  → Crush adapter
- * 6. User-Agent starts with "claude-cli/"  → Claude Code adapter
- * 7. litellm/* UA or x-litellm-* headers   → LiteLLM passthrough adapter
- * 8. Default                                → MERIDIAN_DEFAULT_AGENT env var, or OpenCode
+ * 3. x-openclaw-session-key header         → OpenClaw adapter
+ * 4. User-Agent starts with "opencode/"    → OpenCode adapter
+ * 5. User-Agent starts with "factory-cli/" → Droid adapter
+ * 6. User-Agent starts with "Charm-Crush/" → Crush adapter
+ * 7. User-Agent starts with "claude-cli/"  → Claude Code adapter
+ * 8. litellm/* UA or x-litellm-* headers  → LiteLLM passthrough adapter
+ * 9. Default                               → MERIDIAN_DEFAULT_AGENT env var, or OpenCode
+ *
+ * NOTE: OpenClaw does NOT send a recognisable User-Agent for LLM API calls.
+ * Detection requires explicit configuration in OpenClaw's provider headers:
+ *   models.providers.meridian.headers:
+ *     x-meridian-agent: "openclaw"           (required — selects this adapter)
+ *     x-openclaw-session-key: "<unique-id>"  (optional — enables session continuity)
+ * Also set api: "anthropic-messages" and baseUrl WITHOUT a trailing /v1.
  */
 export function detectAdapter(c: Context): AgentAdapter {
   const agentOverride = c.req.header("x-meridian-agent")?.toLowerCase()
@@ -70,6 +80,11 @@ export function detectAdapter(c: Context): AgentAdapter {
   // OpenCode: plugin injects x-opencode-session; newer versions use x-session-affinity
   if (c.req.header("x-opencode-session") || c.req.header("x-session-affinity")) {
     return openCodeAdapter
+  }
+
+  // OpenClaw: configured via x-openclaw-session-key in provider headers
+  if (c.req.header("x-openclaw-session-key")) {
+    return openClawAdapter
   }
 
   const userAgent = c.req.header("user-agent") || ""

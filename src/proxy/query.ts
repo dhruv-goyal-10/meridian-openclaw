@@ -76,6 +76,8 @@ export interface QueryContext {
   mcpServerName: string
   /** Allowed MCP tools (from pipeline) */
   allowedMcpTools: readonly string[]
+  /** SDK built-in tools that run natively even in passthrough mode (e.g. WebSearch, WebFetch) */
+  nativeBuiltinTools?: readonly string[]
   /** Callback to receive stderr lines from the Claude subprocess */
   onStderr?: (line: string) => void
   /** Effort level — controls thinking depth (low/medium/high/max) */
@@ -212,7 +214,7 @@ export function buildQueryOptions(ctx: QueryContext): BuildQueryResult {
     prompt, model, workingDirectory, clientWorkingDirectory, systemContext, claudeExecutable,
     passthrough, stream, sdkAgents, passthroughMcp, cleanEnv, hasDeferredTools,
     resumeSessionId, isUndo, undoRollbackUuid, sdkHooks, blockedTools, incompatibleTools,
-    mcpServerName, allowedMcpTools, onStderr,
+    mcpServerName, allowedMcpTools, nativeBuiltinTools, onStderr,
     effort, thinking, taskBudget, betas, settingSources, codeSystemPrompt, clientSystemPrompt,
     memory, dreaming, sharedMemory, maxBudgetUsd, fallbackModel, sdkDebug, additionalDirectories,
   } = ctx
@@ -263,7 +265,7 @@ export function buildQueryOptions(ctx: QueryContext): BuildQueryResult {
             settingSources: [],
             disallowedTools: [...allBlockedTools],
             ...(passthroughMcp ? {
-              allowedTools: [...passthroughMcp.toolNames],
+              allowedTools: [...passthroughMcp.toolNames, ...(nativeBuiltinTools ?? [])],
               mcpServers: { [PASSTHROUGH_MCP_NAME]: passthroughMcp.server },
             } : {}),
           }
