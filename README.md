@@ -12,6 +12,19 @@
 
 ---
 
+> ### OpenClaw Integration
+>
+> This fork adds first-class support for [OpenClaw](https://openclaw.ai) as an agent. Two setup guides cover everything needed to get running:
+>
+> | Guide | What it covers |
+> |---|---|
+> | [**docs/meridian-setup.md**](docs/meridian-setup.md) | Cloning this fork, installing Bun, authenticating with Claude Max, and running Meridian on an Ubuntu VM |
+> | [**docs/openclaw-setup.md**](docs/openclaw-setup.md) | Configuring OpenClaw's provider to point at Meridian — including the required `api: "anthropic-messages"` setting, adapter detection headers, session continuity, and which tools to disable so WebSearch/WebFetch run natively via the SDK |
+>
+> Start with the Meridian setup guide, then the OpenClaw guide. The rest of this README is unchanged from the original repository.
+
+---
+
 Meridian bridges the Claude Code SDK to the standard Anthropic API. No OAuth interception. No binary patches. No hacks. Just pure, documented SDK calls. Any tool that speaks the Anthropic or OpenAI protocol — OpenCode, ForgeCode, Crush, Cline, Aider, Pi, Droid, Open WebUI, Claude Code — connects to Meridian and gets Claude, with session management, streaming, and prompt caching handled natively by the SDK.
 
 > [!NOTE]
