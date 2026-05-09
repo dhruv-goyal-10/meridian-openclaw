@@ -139,16 +139,32 @@ export interface BuildQueryResult {
  *   - Both resume and deferred (+1): a second prelude phase pushes one phase
  *     out, so budget becomes 4.
  *   - Advisor (+3): server-side advisor executes call + result + final answer.
+ *   - Native built-in tools (+2 per tool, capped at +9): each native tool
+ *     call (WebSearch, WebFetch) consumes one turn. A thorough research
+ *     chain — 1 search + 3-4 fetches + final answer — needs 5-6 turns,
+ *     already past the base budget. The cap of +9 (total 12) gives the
+ *     model room to fetch multiple URLs for cross-referencing before
+ *     answering, matching how a careful researcher reads several sources.
+ *     Without sufficient budget the SDK returns "Reached maximum number of
+ *     turns" mid-chain before the final answer can be generated.
+ *
+ *     Practical breakdown for WebSearch + WebFetch (2 tools):
+ *       min(2 * 4, 9) = 8 → maxTurns = 11
+ *       Fits: 1 search + up to 6 fetches + 1 answer, or 2 searches + 4 fetches
  */
 function computePassthroughMaxTurns(
   resumeSessionId: string | undefined,
   hasDeferredTools: boolean,
   advisorModel: string | undefined,
+  nativeBuiltinTools?: readonly string[],
 ): number {
   const hasResume = !!resumeSessionId
   const base = hasResume && hasDeferredTools ? 4 : 3
   const advisorBump = advisorModel ? 3 : 0
-  return base + advisorBump
+  const nativeBump = nativeBuiltinTools && nativeBuiltinTools.length > 0
+    ? Math.min(nativeBuiltinTools.length * 4, 9)
+    : 0
+  return base + advisorBump + nativeBump
 }
 
 /**
@@ -231,7 +247,7 @@ export function buildQueryOptions(ctx: QueryContext): BuildQueryResult {
       // is not in PATH — causing subprocess spawns to fail.
       executable: "node" as const,
       maxTurns: passthrough
-        ? computePassthroughMaxTurns(resumeSessionId, hasDeferredTools, ctx.advisorModel)
+        ? computePassthroughMaxTurns(resumeSessionId, hasDeferredTools, ctx.advisorModel, nativeBuiltinTools)
         : 200,
       cwd: workingDirectory,
       model,
@@ -250,7 +266,10 @@ export function buildQueryOptions(ctx: QueryContext): BuildQueryResult {
             // from the upstream payload. Setting `tools: []` elides the
             // catalog from the request body. Closes #489 (diagnosis by
             // @albe-jj).
-            tools: [],
+            // Exception: nativeBuiltinTools (e.g. WebSearch, WebFetch for
+            // OpenClaw) are server-side tools with negligible token cost
+            // that the adapter explicitly requests — include only those.
+            tools: nativeBuiltinTools?.length ? [...nativeBuiltinTools] : [],
             // Explicitly disable claude-code's default settings loading.
             // Without this, claude-code falls back to its built-in default
             // (load user + project + local) and slurps CLAUDE.md from the

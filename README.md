@@ -20,8 +20,9 @@
 > |---|---|
 > | [**docs/meridian-setup.md**](docs/meridian-setup.md) | Cloning this fork, installing Bun, authenticating with Claude Max, and running Meridian on an Ubuntu VM |
 > | [**docs/openclaw-setup.md**](docs/openclaw-setup.md) | Configuring OpenClaw's provider to point at Meridian — including the required `api: "anthropic-messages"` setting, adapter detection headers, session continuity, and which tools to disable so WebSearch/WebFetch run natively via the SDK |
+> | [**docs/openclaw-native-web-tools.md**](docs/openclaw-native-web-tools.md) | Technical deep-dive into the fork-specific changes: how WebSearch and WebFetch were made fully transparent, the `maxTurns` fix that enables multi-URL research chains, and the recommended AGENTS.md prompt for accurate live-data retrieval |
 >
-> Start with the Meridian setup guide, then the OpenClaw guide. The rest of this README is unchanged from the original repository.
+> Start with the Meridian setup guide, then the OpenClaw guide. The native web tools doc is a reference for understanding what this fork changed and why.
 
 ---
 

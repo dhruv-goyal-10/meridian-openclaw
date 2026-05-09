@@ -23,9 +23,8 @@ const ALLOWED_MCP_TOOLS: readonly string[] = [
   `mcp__${MCP_SERVER_NAME}__read`,
   `mcp__${MCP_SERVER_NAME}__write`,
   `mcp__${MCP_SERVER_NAME}__edit`,
-  `mcp__${MCP_SERVER_NAME}__bash`,
-  `mcp__${MCP_SERVER_NAME}__glob`,
-  `mcp__${MCP_SERVER_NAME}__grep`,
+  `mcp__${MCP_SERVER_NAME}__exec`,
+  `mcp__${MCP_SERVER_NAME}__apply_patch`,
 ]
 
 export const openClawTransforms: Transform[] = [
