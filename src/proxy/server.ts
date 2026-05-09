@@ -1174,6 +1174,15 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
                       claudeLog("passthrough.toolsearch_filtered", { mode: "non_stream" })
                       continue
                     }
+                    // Filter native built-in tool_use blocks (e.g. WebSearch, WebFetch) —
+                    // they executed transparently inside the SDK; the model's next turn
+                    // incorporates the result as text. Client must never see them, and they
+                    // must NOT enter contentBlocks or isPassthroughTurn2 will suppress
+                    // the actual text answer thinking it was a turn-2 artefact.
+                    if (passthrough && b.type === "tool_use" && nativeBuiltinToolsSet.has((b as any).name)) {
+                      claudeLog("passthrough.native_tool_transparent", { mode: "non_stream", tool: (b as any).name })
+                      continue
+                    }
                     // Strip thinking blocks — meaningless to non-native clients
                     if (passthrough && !pipelineCtx.supportsThinking && !sdkFeatures.thinkingPassthrough && (b.type === "thinking" || b.type === "redacted_thinking")) {
                       claudeLog("passthrough.thinking_stripped", { mode: "non_stream", type: b.type })
@@ -1707,6 +1716,15 @@ export function createProxyServer(config: Partial<ProxyConfig> = {}): ProxyServe
                         // for deferred tool loading, not visible to the client.
                         if (block.name === "ToolSearch") {
                           if (eventIndex !== undefined) skipBlockIndices.add(eventIndex)
+                          continue
+                        }
+                        // Filter native built-in tool_use blocks (e.g. WebSearch, WebFetch) —
+                        // they ran transparently inside the SDK. Skip without adding to
+                        // streamedToolUseIds so turn-2 is NOT suppressed — the text answer
+                        // with incorporated search results flows through to the client.
+                        if (passthrough && nativeBuiltinToolsSet.has(block.name)) {
+                          if (eventIndex !== undefined) skipBlockIndices.add(eventIndex)
+                          claudeLog("passthrough.native_tool_transparent", { mode: "stream", tool: block.name })
                           continue
                         }
                         if (passthrough && block.name.startsWith(PASSTHROUGH_MCP_PREFIX)) {

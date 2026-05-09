@@ -9,12 +9,6 @@ Meridian is a proxy that bridges OpenClaw to Claude Max via the Claude Code SDK.
 ## Step 1 — Clone the fork on the VM
 
 ```bash
-git clone git@github.com:dhruv-goyal-10/meridian-openclaw.git meridian
-cd meridian
-```
-
-If you prefer HTTPS:
-```bash
 git clone https://github.com/dhruv-goyal-10/meridian-openclaw.git meridian
 cd meridian
 ```
